@@ -6,7 +6,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use OpenAI\Laravel\Facades\OpenAI;
-use Spatie\PdfToText\Pdf;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Smalot\PdfParser\Parser;
 
 class ResumeAnalysisServices
 {
@@ -135,48 +136,93 @@ class ResumeAnalysisServices
 
     private function extractTextFromPdf(String $path): string
     {
-        // get pdf file from storage
-        $tempFile = tempnam(sys_get_temp_dir(), 'resume_');
-        $filePath = parse_url($path, PHP_URL_PATH);
-        if (!$filePath) {
-            throw new \Exception('Invalid resume file path');
-        }
-
-        $filename = basename($filePath);
-        $storagePath = "resumes/{$filename}";
-
-        if (!Storage::disk('cloud')->exists($storagePath)) {
-            throw new \Exception('Resume file not found');
-        }
-
-        $pdfContent = Storage::disk('cloud')->get($storagePath);
-        if (!$pdfContent) {
-            throw new \Exception('Failed to read resume file');
-        }
-
-        file_put_contents($tempFile, $pdfContent);
-
-        // check if pdftotext is available
-        $pdfToTextPath = ['/opt/homebrew/bin/pdftotext', '/usr/local/bin/pdftotext', '/usr/bin/pdftotext'];
-        $pdfToTextAvailable = false;
-        foreach ($pdfToTextPath as $path) {
-            if (file_exists($path)) {
-                $pdfToTextAvailable = true;
-                break;
+        try {
+            // get pdf file from storage
+            $filePath = parse_url($path, PHP_URL_PATH);
+            if (!$filePath) {
+                throw new \Exception('Invalid resume file path');
             }
+
+            $filename = basename($filePath);
+            $storagePath = "resumes/{$filename}";
+
+            if (!Storage::disk('cloud')->exists($storagePath)) {
+                throw new \Exception('Resume file not found');
+            }
+
+            $pdfContent = Storage::disk('cloud')->get($storagePath);
+            if (!$pdfContent) {
+                throw new \Exception('Failed to read resume file');
+            }
+
+            // Create a temporary file for processing
+            $tempFile = tempnam(sys_get_temp_dir(), 'resume_');
+            file_put_contents($tempFile, $pdfContent);
+
+            try {
+                // Use smalot/pdfparser to extract text from the PDF
+                $text = $this->extractTextFromPdfBasic($tempFile);
+                
+                // Clean up the temporary file
+                unlink($tempFile);
+                
+                return $text;
+                
+            } catch (\Exception $extractionException) {
+                // Clean up the temporary file
+                unlink($tempFile);
+                
+                Log::error("Failed to extract text from PDF using smalot/pdfparser", [
+                    'error' => $extractionException->getMessage(),
+                    'path' => $path
+                ]);
+                
+                throw new \Exception('Unable to extract text from PDF: ' . $extractionException->getMessage());
+            }
+            
+        } catch (\Exception $e) {
+            Log::error("Failed to extract text from PDF", [
+                'error' => $e->getMessage(),
+                'path' => $path
+            ]);
+            throw $e;
         }
+    }
 
-        if (!$pdfToTextAvailable) {
-            throw new \Exception('pdftotext not found');
+    /**
+     * Basic PDF text extraction method using smalot/pdfparser
+     * This library is specifically designed for extracting text from existing PDFs
+     */
+    private function extractTextFromPdfBasic(string $filePath): string
+    {
+        try {
+            // Create a new PDF parser instance
+            $parser = new Parser();
+            
+            // Parse the PDF file
+            $pdf = $parser->parseFile($filePath);
+            
+            // Extract text from the PDF
+            $text = $pdf->getText();
+            
+            // Clean up the extracted text
+            $text = preg_replace('/\s+/', ' ', $text); // Replace multiple spaces with single space
+            $text = trim($text);
+            
+            // Log success
+            Log::debug("Successfully extracted text from PDF using smalot/pdfparser", [
+                'textLength' => strlen($text),
+                'filePath' => $filePath
+            ]);
+            
+            return $text;
+            
+        } catch (\Exception $e) {
+            Log::error("Failed to extract text from PDF using smalot/pdfparser", [
+                'error' => $e->getMessage(),
+                'filePath' => $filePath
+            ]);
+            throw new \Exception('Failed to extract text from PDF: ' . $e->getMessage());
         }
-
-        // extract text from pdf file
-        $text = (new Pdf)->setPdf($tempFile)->text();
-
-        // remove temp file
-        unlink($tempFile);
-
-        // return text
-        return $text;
     }
 }
