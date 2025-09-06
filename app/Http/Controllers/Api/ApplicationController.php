@@ -27,56 +27,60 @@ class ApplicationController extends BaseController
      */
     public function index(Request $request): JsonResponse
     {
-        $query = JobApplication::with(['jobVacancy.company', 'resume'])
-            ->where('user_id', Auth::id());
+        try {
+            $query = JobApplication::with(['jobVacancy.company', 'resume'])
+                ->where('user_id', Auth::id());
 
-        // Filter by status
-        if ($request->has('status')) {
-            $query->where('status', $request->get('status'));
-        }
+            // Filter by status
+            if ($request->has('status')) {
+                $query->where('status', $request->get('status'));
+            }
 
-        // Sort options
-        $sortBy = $request->get('sort_by', 'created_at');
-        $sortOrder = $request->get('sort_order', 'desc');
-        $query->orderBy($sortBy, $sortOrder);
+            // Sort options
+            $sortBy = $request->get('sort_by', 'created_at');
+            $sortOrder = $request->get('sort_order', 'desc');
+            $query->orderBy($sortBy, $sortOrder);
 
-        // Pagination
-        $perPage = $request->get('per_page', 15);
-        $applications = $query->paginate($perPage);
+            // Pagination
+            $perPage = $request->get('per_page', 15);
+            $applications = $query->paginate($perPage);
 
-        $applicationData = $applications->map(function ($application) {
-            return [
-                'id' => $application->id,
-                'status' => $application->status,
-                'ai_score' => $application->ai_score,
-                'ai_feedback' => $application->ai_feedback,
-                'created_at' => $application->created_at,
-                'updated_at' => $application->updated_at,
-                'job' => [
-                    'id' => $application->jobVacancy->id,
-                    'title' => $application->jobVacancy->title,
-                    'location' => $application->jobVacancy->location,
-                    'company_name' => $application->jobVacancy->company->name,
-                ],
-                'resume' => [
-                    'id' => $application->resume->id,
-                    'file_name' => $application->resume->file_name,
+            $applicationData = $applications->map(function ($application) {
+                return [
+                    'id' => $application->id,
+                    'status' => $application->status,
+                    'ai_score' => $application->ai_score,
+                    'ai_feedback' => $application->ai_feedback,
+                    'created_at' => $application->created_at,
+                    'updated_at' => $application->updated_at,
+                    'job' => [
+                        'id' => $application->jobVacancy->id,
+                        'title' => $application->jobVacancy->title,
+                        'location' => $application->jobVacancy->location,
+                        'company_name' => $application->jobVacancy->company ? $application->jobVacancy->company->name : 'Unknown Company',
+                    ],
+                    'resume' => $application->resume ? [
+                        'id' => $application->resume->id,
+                        'file_name' => $application->resume->file_name,
+                    ] : null
+                ];
+            });
+
+            return $this->paginatedResponse(
+                $applicationData,
+                [
+                    'current_page' => $applications->currentPage(),
+                    'per_page' => $applications->perPage(),
+                    'total' => $applications->total(),
+                    'last_page' => $applications->lastPage(),
+                    'from' => $applications->firstItem(),
+                    'to' => $applications->lastItem(),
+                    'has_more_pages' => $applications->hasMorePages()
                 ]
-            ];
-        });
-
-        return $this->paginatedResponse(
-            $applicationData,
-            [
-                'current_page' => $applications->currentPage(),
-                'per_page' => $applications->perPage(),
-                'total' => $applications->total(),
-                'last_page' => $applications->lastPage(),
-                'from' => $applications->firstItem(),
-                'to' => $applications->lastItem(),
-                'has_more_pages' => $applications->hasMorePages()
-            ]
-        );
+            );
+        } catch (\Exception $e) {
+            return $this->errorResponse('Failed to retrieve applications', null, 500);
+        }
     }
 
     /**
@@ -103,19 +107,19 @@ class ApplicationController extends BaseController
                     'location' => $application->jobVacancy->location,
                     'salary' => $application->jobVacancy->salary,
                     'type' => $application->jobVacancy->type,
-                    'company' => [
+                    'company' => $application->jobVacancy->company ? [
                         'id' => $application->jobVacancy->company->id,
                         'name' => $application->jobVacancy->company->name,
                         'address' => $application->jobVacancy->company->address,
                         'website' => $application->jobVacancy->company->website,
-                    ]
+                    ] : null
                 ],
-                'resume' => [
+                'resume' => $application->resume ? [
                     'id' => $application->resume->id,
                     'file_name' => $application->resume->file_name,
                     'summary' => $application->resume->summary,
                     'skills' => $application->resume->skills,
-                ]
+                ] : null
             ], 'Application details retrieved successfully');
 
         } catch (\Exception $e) {
@@ -178,7 +182,7 @@ class ApplicationController extends BaseController
                 'ai_score' => $application->ai_score,
                 'ai_feedback' => $application->ai_feedback,
                 'job_title' => $job->title,
-                'company_name' => $job->company->name,
+                'company_name' => $job->company ? $job->company->name : 'Unknown Company',
             ], 'Application submitted successfully', 201);
 
         } catch (\Exception $e) {
